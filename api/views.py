@@ -13,12 +13,27 @@ from .serializers import ProfileSerializer, GameRecordSerializer, PuzzleSerializ
 from .permissions import IsAdmin
 
 from rest_framework import generics
+from .serializers import RegisterSerializer
 from .models import Profile
-from .serializers import ProfileSerializer
+from rest_framework import generics, status
+from rest_framework.response import Response
+from .models import Profile
+from .serializers import RegisterSerializer, ProfileSerializer
 
 class RegisterView(generics.CreateAPIView):
     queryset = Profile.objects.all()
-    serializer_class = ProfileSerializer
+    serializer_class = RegisterSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        # return user profile data after register
+        profile_data = ProfileSerializer(user).data
+        return Response(profile_data, status=status.HTTP_201_CREATED)
+
+
 
 
 from rest_framework.decorators import api_view

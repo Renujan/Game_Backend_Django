@@ -4,16 +4,30 @@ from .models import Profile, GameRecord, Puzzle
 from rest_framework import serializers
 from .models import Profile
 
-class ProfileSerializer(serializers.ModelSerializer):
+from rest_framework import serializers
+from .models import Profile, GameRecord
+
+# ✅ Your existing GameRecordSerializer
+from rest_framework import serializers
+from .models import Profile, GameRecord
+
+from rest_framework import serializers
+from .models import Profile
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=True)
+
     class Meta:
         model = Profile
-        fields = ["username", "email", "password", "role"]
-        extra_kwargs = {"password": {"write_only": True}}
+        fields = ['username', 'email', 'password']
 
     def create(self, validated_data):
-        password = validated_data.pop("password")
-        user = Profile(**validated_data)
-        user.set_password(password)  # 🔑 Hash the password
+        user = Profile(
+            username=validated_data['username'],
+            email=validated_data['email'],
+            role='player'  # default role
+        )
+        user.set_password(validated_data['password'])  # 🔐 hash password
         user.save()
         return user
 
@@ -23,13 +37,39 @@ class GameRecordSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GameRecord
-        fields = ['id', 'player', 'player_username', 'puzzle_id', 'player_answer', 'is_correct', 'points_earned', 'time_taken', 'attempted_at']
-        extra_kwargs = {
-            'player': {'read_only': True},
-            'is_correct': {'read_only': True},
-            'points_earned': {'read_only': True},
-            'attempted_at': {'read_only': True},
-        }
+        fields = [
+            'puzzle_id',
+            'player_answer',
+            'is_correct',
+            'points_earned',
+            'time_taken',
+            'attempted_at',
+            'player_username'
+        ]
+
+class ProfileSerializer(serializers.ModelSerializer):
+    # computed fields
+    accuracy = serializers.SerializerMethodField()
+    games_played = serializers.SerializerMethodField()
+    recent_games = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Profile
+        # ✅ include score here!
+        fields = ["username", "email", "role", "score", "games_played", "accuracy", "recent_games"]
+
+    def get_accuracy(self, obj):
+        if obj.total_games_played > 0:
+            return round((obj.total_correct_answers / obj.total_games_played) * 100, 1)
+        return 0.0
+
+    def get_games_played(self, obj):
+        return obj.total_games_played
+
+    def get_recent_games(self, obj):
+        last_games = obj.game_records.order_by('-attempted_at')[:5]
+        return GameRecordSerializer(last_games, many=True).data
+
 
 from rest_framework import serializers
 from .models import Puzzle
