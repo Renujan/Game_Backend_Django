@@ -1,18 +1,22 @@
 from rest_framework import serializers
 from .models import Profile, GameRecord, Puzzle
 
+from rest_framework import serializers
+from .models import Profile
+
 class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
-        fields = ['id', 'username', 'email', 'password', 'score', 'role', 'total_games_played', 'total_correct_answers', 'created_at', 'date_joined']
-        extra_kwargs = {
-            'password': {'write_only': True},
-            'score': {'read_only': True},
-            'total_games_played': {'read_only': True},
-            'total_correct_answers': {'read_only': True},
-            'created_at': {'read_only': True},
-            'date_joined': {'read_only': True},
-        }
+        fields = ["username", "email", "password", "role"]
+        extra_kwargs = {"password": {"write_only": True}}
+
+    def create(self, validated_data):
+        password = validated_data.pop("password")
+        user = Profile(**validated_data)
+        user.set_password(password)  # 🔑 Hash the password
+        user.save()
+        return user
+
 
 class GameRecordSerializer(serializers.ModelSerializer):
     player_username = serializers.CharField(source='player.username', read_only=True)
@@ -27,21 +31,25 @@ class GameRecordSerializer(serializers.ModelSerializer):
             'attempted_at': {'read_only': True},
         }
 
+from rest_framework import serializers
+from .models import Puzzle
+
 class PuzzleSerializer(serializers.ModelSerializer):
     time_limit = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()  # 🔹 Add image_url field
 
     class Meta:
         model = Puzzle
-        fields = ['puzzle_id', 'question', 'difficulty', 'points_value', 'time_limit', 'created_at']
-        extra_kwargs = {
-            'puzzle_id': {'read_only': True},
-            'created_at': {'read_only': True},
-        }
+        fields = ['puzzle_id', 'question', 'difficulty', 'points_value', 'time_limit', 'created_at', 'image_url']
 
     def get_time_limit(self, obj):
-        # Return time limit based on difficulty
         limits = {'easy': 60, 'medium': 45, 'hard': 30}
         return limits.get(obj.difficulty, 45)
+
+    def get_image_url(self, obj):
+        # In this case, the `question` field stores the image URL from Banana API
+        return obj.question
+
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
