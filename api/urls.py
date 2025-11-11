@@ -2,13 +2,14 @@ from django.urls import path
 from .views import (
     RegisterView, login_view, profile_view, profile_update, get_puzzle, check_answer,
     leaderboard, game_history, admin_analytics, admin_create_puzzle, admin_players,
-    admin_delete_player, admin_delete_puzzle
+    admin_delete_player, admin_delete_puzzle,login_step1,login_step2_verify_otp
 )
 
 urlpatterns = [
     # Authentication
     path('register/', RegisterView.as_view(), name='register'),
-    path('login/', login_view, name='login'),
+    path('login/', login_step1, name='login'),
+    path("verify-otp/", login_step2_verify_otp, name="verify_otp"),
     path('profile/', profile_view, name='profile'),
     path('profile/update/', profile_update, name='profile_update'),
 
