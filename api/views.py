@@ -63,6 +63,86 @@ def login_view(request):
         })
     return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
+from django.core.cache import cache
+from django.core.mail import send_mail
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+from django.contrib.auth import authenticate
+import random
+from .models import Profile
+
+@api_view(['POST'])
+def login_step1(request):
+    username = request.data.get('username')
+    password = request.data.get('password')
+
+    user = authenticate(username=username, password=password)
+
+    if not user:
+        return Response({'error': 'Invalid credentials'}, status=401)
+
+    # ✅ Generate OTP
+    otp = random.randint(100000, 999999)
+
+    # ✅ Save OTP in cache for 5 minutes
+    cache.set(f"otp_{user.email}", otp, timeout=300)
+
+    # ✅ Send Email
+    send_mail(
+        subject="Your OTP Code",
+        message=f"Your OTP is: {otp}",
+        from_email="noreply@banana.com",
+        recipient_list=[user.email],
+    )
+
+    return Response({
+        "message": "OTP sent to registered email ✅",
+        "otp_sent": True,
+        "email": user.email
+    }, status=200)
+
+from rest_framework_simplejwt.tokens import RefreshToken
+
+@api_view(['POST'])
+def login_step2_verify_otp(request):
+    email = request.data.get("email")
+    otp = request.data.get("otp")
+
+    if not email or not otp:
+        return Response({"error": "Email & OTP required"}, status=400)
+
+    saved_otp = cache.get(f"otp_{email}")
+
+    if not saved_otp:
+        return Response({"error": "OTP expired"}, status=400)
+
+    if str(saved_otp) != str(otp):
+        return Response({"error": "Invalid OTP"}, status=400)
+
+    # ✅ OTP correct → Login
+    user = Profile.objects.get(email=email)
+
+    refresh = RefreshToken.for_user(user)
+
+    # ✅ Clean OTP
+    cache.delete(f"otp_{email}")
+
+    return Response({
+        "message": "Login successful ✅",
+        "refresh": str(refresh),
+        "access": str(refresh.access_token),
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "score": user.score,
+            "role": user.role
+        }
+    }, status=200)
+
+
+
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])

@@ -15,8 +15,15 @@ class Profile(AbstractUser):
     total_correct_answers = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        # ✅ If user is superuser, make role admin
+        if self.is_superuser:
+            self.role = 'admin'
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.username
+
 
 class GameRecord(models.Model):
     player = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='game_records')
