@@ -56,7 +56,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         # ✅ include score here!
-        fields = ["username", "email", "role", "score", "games_played", "accuracy", "recent_games"]
+        fields = ["id","username", "email", "role", "score", "games_played", "accuracy", "recent_games"]
 
     def get_accuracy(self, obj):
         if obj.total_games_played > 0:
