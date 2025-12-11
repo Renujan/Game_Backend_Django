@@ -10,6 +10,7 @@ class Profile(AbstractUser):
     ]
 
     score = models.IntegerField(default=0)
+    coins = models.IntegerField(default=100)  # Starting coins for new users
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='player')
     total_games_played = models.IntegerField(default=0)
     total_correct_answers = models.IntegerField(default=0)
@@ -73,4 +74,3 @@ class Puzzle(models.Model):
 
     def __str__(self):
         return f"Puzzle {self.puzzle_id} ({self.difficulty})"
-
