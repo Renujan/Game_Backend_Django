@@ -33,7 +33,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class GameRecordSerializer(serializers.ModelSerializer):
-    player_username = serializers.CharField(source='player.username', read_only=True)
+    created_at = serializers.DateTimeField(source='attempted_at')
 
     class Meta:
         model = GameRecord
@@ -43,8 +43,7 @@ class GameRecordSerializer(serializers.ModelSerializer):
             'is_correct',
             'points_earned',
             'time_taken',
-            'attempted_at',
-            'player_username'
+            'created_at'  # Map attempted_at to created_at for API consistency
         ]
 
 class ProfileSerializer(serializers.ModelSerializer):
@@ -55,8 +54,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Profile
-        # ✅ include score here!
-        fields = ["id","username", "email", "role", "score", "games_played", "accuracy", "recent_games"]
+        fields = ["id", "username", "email", "role", "score", "coins", "games_played", "accuracy", "recent_games"]
 
     def get_accuracy(self, obj):
         if obj.total_games_played > 0:
@@ -67,8 +65,11 @@ class ProfileSerializer(serializers.ModelSerializer):
         return obj.total_games_played
 
     def get_recent_games(self, obj):
-        last_games = obj.game_records.order_by('-attempted_at')[:5]
-        return GameRecordSerializer(last_games, many=True).data
+        # Order by attempted_at descending (latest games first) - ensures newest are on top
+        last_games = obj.game_records.order_by('-attempted_at')[:10]
+        # Double-check ordering by sorting again in Python
+        sorted_games = sorted(last_games, key=lambda x: x.attempted_at, reverse=True)[:10]
+        return GameRecordSerializer(sorted_games, many=True).data
 
 
 from rest_framework import serializers

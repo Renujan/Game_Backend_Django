@@ -3,22 +3,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.db import models
 from django.db.models import Q, F, Count, Case, When, IntegerField
 from django.utils import timezone
 from datetime import timedelta
 import random
 import requests
 from .models import Profile, GameRecord, Puzzle
-from .serializers import ProfileSerializer, GameRecordSerializer, PuzzleSerializer, LeaderboardSerializer, LoginSerializer, ProfileUpdateSerializer
+from .serializers import ProfileSerializer, GameRecordSerializer, PuzzleSerializer, LeaderboardSerializer, LoginSerializer, ProfileUpdateSerializer, RegisterSerializer
 from .permissions import IsAdmin
-
-from rest_framework import generics
-from .serializers import RegisterSerializer
-from .models import Profile
-from rest_framework import generics, status
-from rest_framework.response import Response
-from .models import Profile
-from .serializers import RegisterSerializer, ProfileSerializer
 
 class RegisterView(generics.CreateAPIView):
     queryset = Profile.objects.all()
@@ -58,6 +51,7 @@ def login_view(request):
                 'username': user.username,
                 'email': user.email,
                 'score': user.score,
+                'coins': user.coins,
                 'role': user.role
             }
         })
@@ -137,9 +131,99 @@ def login_step2_verify_otp(request):
             "username": user.username,
             "email": user.email,
             "score": user.score,
+            "coins": user.coins,
             "role": user.role
         }
     }, status=200)
+
+# ---------------------------
+# POWER-UP ENDPOINTS
+# ---------------------------
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def freeze_timer(request):
+    puzzle_id = request.data.get('puzzle_id')
+    freeze_seconds = int(request.data.get('freeze_seconds', 5))
+
+    # Validate freeze duration
+    if freeze_seconds not in [5, 10]:
+        return Response({'error': 'Invalid freeze duration. Use 5 or 10 seconds.'}, status=400)
+
+    # Calculate cost
+    cost = 20 if freeze_seconds == 5 else 35
+
+    # Check user has enough coins
+    if request.user.coins < cost:
+        return Response({
+            'error': f'Not enough coins. Need {cost} coins.',
+            'current_coins': request.user.coins,
+            'required_coins': cost
+        }, status=400)
+
+    if not puzzle_id:
+        return Response({'error': 'puzzle_id is required'}, status=400)
+
+    try:
+        # Deduct coins atomically
+        Profile.objects.filter(id=request.user.id).update(coins=F('coins') - cost)
+
+        # Store freeze status in cache (temporary)
+        freeze_key = f"timer_freeze_{request.user.id}"
+        cache.set(freeze_key, True, timeout=freeze_seconds)
+
+        # Refresh user coins
+        request.user.refresh_from_db()
+
+        return Response({
+            'success': True,
+            'freeze_seconds': freeze_seconds,
+            'coins_spent': cost,
+            'coins_left': request.user.coins,
+            'active_until': timezone.now() + timedelta(seconds=freeze_seconds)
+        })
+
+    except Exception as e:
+        return Response({'error': 'Failed to activate freeze timer'}, status=500)
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def double_points(request):
+    puzzle_id = request.data.get('puzzle_id')
+    cost = 50
+
+    # Check user has enough coins
+    if request.user.coins < cost:
+        return Response({
+            'error': f'Not enough coins. Need {cost} coins.',
+            'current_coins': request.user.coins,
+            'required_coins': cost
+        }, status=400)
+
+    if not puzzle_id:
+        return Response({'error': 'puzzle_id is required'}, status=400)
+
+    try:
+        # Deduct coins atomically
+        Profile.objects.filter(id=request.user.id).update(coins=F('coins') - cost)
+
+        # Store double points in cache for next puzzle
+        double_key = f"double_points_{request.user.id}"
+        cache.set(double_key, True, timeout=300)  # 5 minutes to use
+
+        # Refresh user coins
+        request.user.refresh_from_db()
+
+        return Response({
+            'success': True,
+            'multiplier': 2.0,
+            'coins_spent': cost,
+            'coins_left': request.user.coins,
+            'active_for_next': True
+        })
+
+    except Exception as e:
+        return Response({'error': 'Failed to activate double points'}, status=500)
 
 
 
@@ -147,6 +231,12 @@ def login_step2_verify_otp(request):
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def profile_view(request):
+    # Ensure coins field exists and has default value for backward compatibility
+    # Also update in database to fix permanently
+    if request.user.coins is None or request.user.coins <= 0:
+        request.user.coins = 100
+        request.user.save()
+
     serializer = ProfileSerializer(request.user)
     return Response(serializer.data)
 
@@ -191,20 +281,26 @@ BANANA_API_URL = "https://marcconrad.com/uob/banana/api.php"
 def get_puzzle(request):
     """
     Fetch a puzzle for the user.
-    1. Call Banana API
+    1. Call Banana API with difficulty parameter
     2. Store solution in cache
-    3. Return image URL to frontend
+    3. Return image URL to frontend with selected difficulty
     """
+    # Read and validate difficulty from query params
+    difficulty = request.query_params.get('difficulty', 'medium')
+    if difficulty not in ['easy', 'medium', 'hard']:
+        difficulty = 'medium'  # Default if invalid
+
     try:
-        response = requests.get(BANANA_API_URL, timeout=5)
+        # Include difficulty in Banana API request
+        api_url = f"{BANANA_API_URL}?difficulty={difficulty}"
+        response = requests.get(api_url, timeout=5)
         if response.status_code != 200:
             raise Exception("Banana API error")
         data = response.json()
 
-        puzzle_id = f"banana_{random.randint(1000,9999)}"
+        puzzle_id = f"{difficulty}_{random.randint(1000,9999)}"
         question = data.get("question")  # This is the image URL
         solution = str(data.get("solution"))
-        difficulty = random.choice(['easy', 'medium', 'hard'])
         points_value = POINTS_MAP[difficulty]
         time_limit = DIFFICULTY_TIME[difficulty]
 
@@ -228,11 +324,10 @@ def get_puzzle(request):
         data_to_send['image_url'] = question
         return Response(data_to_send)
     except Exception as e:
-        # Fallback sample puzzle
-        puzzle_id = f"sample_{random.randint(1000,9999)}"
+        # Fallback sample puzzle with selected difficulty
+        puzzle_id = f"sample_{difficulty}_{random.randint(1000,9999)}"
         question = "https://via.placeholder.com/400?text=Sample+Puzzle"
         solution = "4"
-        difficulty = "easy"
         points_value = POINTS_MAP[difficulty]
         time_limit = DIFFICULTY_TIME[difficulty]
 
@@ -257,6 +352,7 @@ def check_answer(request):
     puzzle_id = request.data.get('puzzle_id')
     answer = request.data.get('answer')
     time_taken = request.data.get('time_taken', 0)
+    current_streak = int(request.data.get('current_streak', 0))
 
     if not puzzle_id or answer is None:
         return Response({'error': 'puzzle_id and answer are required'}, status=400)
@@ -266,7 +362,35 @@ def check_answer(request):
         correct_solution = cache.get(f"puzzle_solution_{puzzle_id}")
 
         is_correct = str(answer).strip() == str(correct_solution).strip()
-        points_earned = puzzle.points_value if is_correct else 0
+
+        # Calculate streak multiplier (1x, 1.5x, 2x, 2.5x for streaks 3,5,7+)
+        if is_correct and current_streak >= 0:
+            if current_streak >= 7:
+                multiplier = 2.5
+            elif current_streak >= 5:
+                multiplier = 2.0
+            elif current_streak >= 3:
+                multiplier = 1.5
+            else:
+                multiplier = 1.0
+        else:
+            multiplier = 1.0
+
+        # Speed bonus (faster answers get extra points)
+        speed_bonus = 0
+        time_limit = DIFFICULTY_TIME.get(puzzle.difficulty, 45)
+        if is_correct and time_taken < time_limit * 0.3:  # Within 30% of time limit
+            speed_bonus = puzzle.points_value * 0.2  # 20% bonus
+
+        # Check for double points power-up
+        double_key = f"double_points_{request.user.id}"
+        double_points_active = cache.get(double_key) is not None
+        if double_points_active:
+            multiplier *= 2.0  # Apply double points multiplier
+            cache.delete(double_key)  # Consume the power-up
+
+        base_points = puzzle.points_value if is_correct else 0
+        points_earned = int((base_points * multiplier) + speed_bonus)
 
         # Create game record
         game_record = GameRecord.objects.create(
@@ -278,11 +402,15 @@ def check_answer(request):
             time_taken=time_taken
         )
 
+        # Award coins for winning puzzle (10 coins per win)
+        coins_earned = 10 if is_correct else 0
+
         # Update player stats using F expressions
         Profile.objects.filter(id=request.user.id).update(
             total_games_played=F('total_games_played') + 1,
             total_correct_answers=F('total_correct_answers') + int(is_correct),
-            score=F('score') + points_earned
+            score=F('score') + points_earned,
+            coins=F('coins') + coins_earned  # Award 10 coins for correct answers
         )
 
         # Refresh user from DB to get real numbers
@@ -293,7 +421,12 @@ def check_answer(request):
             'result': serializer.data,
             'correct': is_correct,
             'points_earned': points_earned,
-            'total_score': request.user.score
+            'coins_earned': coins_earned,  # Add coins earned to response
+            'time_taken': time_taken,  # Important: Include time_taken in response
+            'multiplier': multiplier,
+            'speed_bonus': int(speed_bonus),
+            'total_score': request.user.score,
+            'total_coins': request.user.coins  # Include updated coin total
         })
 
     except Puzzle.DoesNotExist:
@@ -318,6 +451,43 @@ def leaderboard(request):
 
     serializer = LeaderboardSerializer(players, many=True)
     return Response(serializer.data)
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def leaderboard_weekly(request):
+    limit = int(request.GET.get('limit', 10))
+
+    # Get players with games in the last 7 days
+    week_ago = timezone.now() - timedelta(days=7)
+    recent_players = Profile.objects.filter(
+        game_records__attempted_at__gte=week_ago
+    ).distinct().exclude(role='admin')
+
+    # Calculate weekly stats for each player
+    players_weekly = []
+    for player in recent_players[:limit]:
+        week_games = player.game_records.filter(attempted_at__gte=week_ago)
+        week_correct = week_games.filter(is_correct=True).count()
+        week_total = week_games.count()
+        week_score = week_games.filter(is_correct=True).aggregate(
+            total_points=models.Sum('points_earned')
+        )['total_points'] or 0
+
+        week_accuracy = (week_correct / week_total * 100) if week_total > 0 else 0
+
+        players_weekly.append({
+            'id': player.id,
+            'username': player.username,
+            'weekly_games': week_total,
+            'weekly_correct': week_correct,
+            'weekly_score': week_score,
+            'weekly_accuracy': round(week_accuracy, 1),
+            'total_score': player.score
+        })
+
+    # Sort by weekly score, then weekly accuracy
+    players_weekly.sort(key=lambda x: (-x['weekly_score'], -x['weekly_accuracy']))
+    return Response(players_weekly[:limit])
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])

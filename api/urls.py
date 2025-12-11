@@ -2,7 +2,8 @@ from django.urls import path
 from .views import (
     RegisterView, login_view, profile_view, profile_update, get_puzzle, check_answer,
     leaderboard, game_history, admin_analytics, admin_create_puzzle, admin_players,
-    admin_delete_player, admin_delete_puzzle,login_step1,login_step2_verify_otp
+    admin_delete_player, admin_delete_puzzle, login_step1, login_step2_verify_otp,
+    freeze_timer, double_points,leaderboard_weekly
 )
 
 urlpatterns = [
@@ -16,8 +17,11 @@ urlpatterns = [
     # Game endpoints
     path('game/question/', get_puzzle, name='get_puzzle'),
     path('game/answer/', check_answer, name='check_answer'),
+    path('game/freeze-timer/', freeze_timer, name='freeze_timer'),
+    path('game/double-points/', double_points, name='double_points'),
     path('game/history/', game_history, name='game_history'),
     path('leaderboard/', leaderboard, name='leaderboard'),
+    path('leaderboard/weekly/', leaderboard_weekly, name='leaderboard_weekly'),
 
     # Admin endpoints
     path('admin/players/', admin_players, name='admin_players'),
